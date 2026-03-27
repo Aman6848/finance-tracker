@@ -1,5 +1,6 @@
 package com.finance.tracker.service;
 
+import com.finance.tracker.dto.MonthlySummaryResponse;
 import com.finance.tracker.entity.Expense;
 import com.finance.tracker.repository.ExpenseRepository;
 import org.springframework.data.domain.Page;
@@ -9,10 +10,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class ExpenseService {
@@ -38,29 +41,53 @@ public class ExpenseService {
         return expenseRepository.findByCategory(category);
     }
 
-    public Page<Expense> getFilteredExpenses(String category, LocalDate startDate, LocalDate endDate, Pageable pageable) {
-        LocalDateTime startDateTime = startDate != null ? startDate.atStartOfDay() : null;
-        LocalDateTime endDateTime = endDate != null ? endDate.atTime(LocalTime.MAX) : null;
+    public Page<Expense> getFilteredExpenses(String category, LocalDateTime startDate, LocalDateTime endDate, Pageable pageable) {
+        return expenseRepository.findAll(buildExpenseSpecification(category, startDate, endDate), pageable);
+    }
 
-        Specification<Expense> specification = (root, query, criteriaBuilder) ->
-                criteriaBuilder.conjunction();
+    public Map<String, List<Expense>> getExpensesGroupedByDay(LocalDateTime startDate, LocalDateTime endDate) {
+        LocalDateTime effectiveStartDate = startDate != null ? startDate : LocalDateTime.MIN;
+        LocalDateTime effectiveEndDate = endDate != null ? endDate : LocalDateTime.MAX;
 
-        if (category != null && !category.isBlank()) {
-            specification = specification.and((root, query, criteriaBuilder) ->
-                    criteriaBuilder.equal(root.get("category"), category));
+        if (effectiveStartDate.isAfter(effectiveEndDate)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startDate must be before endDate");
         }
 
-        if (startDateTime != null) {
-            specification = specification.and((root, query, criteriaBuilder) ->
-                    criteriaBuilder.greaterThanOrEqualTo(root.get("createdAt"), startDateTime));
+        return expenseRepository.findAllByCreatedAtBetweenOrderByCreatedAtAsc(effectiveStartDate, effectiveEndDate)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        expense -> expense.getCreatedAt().toLocalDate().toString(),
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+    }
+
+    public MonthlySummaryResponse getMonthlySummary(int year, int month) {
+        YearMonth yearMonth;
+        try {
+            yearMonth = YearMonth.of(year, month);
+        } catch (RuntimeException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid year or month", exception);
         }
 
-        if (endDateTime != null) {
-            specification = specification.and((root, query, criteriaBuilder) ->
-                    criteriaBuilder.lessThanOrEqualTo(root.get("createdAt"), endDateTime));
-        }
+        LocalDateTime startDate = yearMonth.atDay(1).atStartOfDay();
+        LocalDateTime endDate = yearMonth.atEndOfMonth().atTime(23, 59, 59, 999_999_999);
 
-        return expenseRepository.findAll(specification, pageable);
+        Map<String, Double> categoryTotals = expenseRepository.getCategoryTotalsBetween(startDate, endDate)
+                .stream()
+                .collect(Collectors.toMap(
+                        categoryTotal -> categoryTotal.getCategory() != null
+                                ? categoryTotal.getCategory()
+                                : "Uncategorized",
+                        categoryTotal -> categoryTotal.getTotal() != null
+                                ? categoryTotal.getTotal()
+                                : 0.0,
+                        (left, right) -> right,
+                        LinkedHashMap::new
+                ));
+
+        Double total = expenseRepository.getTotalExpenseAmountBetween(startDate, endDate);
+        return new MonthlySummaryResponse(total != null ? total : 0.0, categoryTotals);
     }
 
     public Double getTotalExpenses() {
@@ -75,6 +102,7 @@ public class ExpenseService {
         existingExpense.setTitle(expense.getTitle());
         existingExpense.setAmount(expense.getAmount());
         existingExpense.setCategory(expense.getCategory());
+        existingExpense.setCreatedAt(expense.getCreatedAt() != null ? expense.getCreatedAt() : existingExpense.getCreatedAt());
 
         return expenseRepository.save(existingExpense);
     }
@@ -86,5 +114,31 @@ public class ExpenseService {
 
         expenseRepository.delete(existingExpense);
         return "Expense deleted successfully";
+    }
+
+    private Specification<Expense> buildExpenseSpecification(String category, LocalDateTime startDate, LocalDateTime endDate) {
+        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startDate must be before endDate");
+        }
+
+        Specification<Expense> specification = (root, query, criteriaBuilder) ->
+                criteriaBuilder.conjunction();
+
+        if (category != null && !category.isBlank()) {
+            specification = specification.and((root, query, criteriaBuilder) ->
+                    criteriaBuilder.equal(root.get("category"), category));
+        }
+
+        if (startDate != null) {
+            specification = specification.and((root, query, criteriaBuilder) ->
+                    criteriaBuilder.greaterThanOrEqualTo(root.get("createdAt"), startDate));
+        }
+
+        if (endDate != null) {
+            specification = specification.and((root, query, criteriaBuilder) ->
+                    criteriaBuilder.lessThanOrEqualTo(root.get("createdAt"), endDate));
+        }
+
+        return specification;
     }
 }

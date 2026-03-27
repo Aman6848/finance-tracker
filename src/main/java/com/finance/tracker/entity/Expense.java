@@ -29,7 +29,7 @@ public class Expense {
 
     private String category;
 
-    @Column(nullable = false, updatable = false)
+    @Column(nullable = false)
     private LocalDateTime createdAt;
 
     public Expense() {
