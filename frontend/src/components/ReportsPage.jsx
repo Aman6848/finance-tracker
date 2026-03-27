@@ -121,6 +121,13 @@ export default function ReportsPage() {
   }, [])
 
   useEffect(() => {
+    resetFormState()
+    setFormError('')
+    setFormMessage('')
+    setExpensePendingDelete(null)
+  }, [selectedYear, selectedMonth])
+
+  useEffect(() => {
     const controller = new AbortController()
 
     async function loadReports() {
