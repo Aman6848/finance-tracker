@@ -1,5 +1,5 @@
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? 'http://localhost:8080'
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? 'https://finance-tracker-production-ef08.up.railway.app'
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, options)
@@ -95,6 +95,25 @@ export function fetchGroupedExpensesByDay({ startDate, endDate, category, signal
     })}`,
     { signal },
   )
+}
+
+export function fetchThreshold(category, signal) {
+  return request(
+    `/threshold${buildQuery({
+      category,
+    })}`,
+    { signal },
+  )
+}
+
+export function saveThreshold(threshold) {
+  return request('/threshold', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(threshold),
+  })
 }
 
 export function getApiBaseUrl() {

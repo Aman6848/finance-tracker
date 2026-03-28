@@ -5,6 +5,8 @@ import {
   fetchExpenses,
   fetchGroupedExpensesByDay,
   fetchMonthlySummary,
+  fetchThreshold,
+  saveThreshold,
   updateExpense,
 } from '../services/api'
 import {
@@ -19,6 +21,7 @@ import {
 } from '../utils/expenseFormatters'
 import ExpenseForm from './ExpenseForm'
 import SummaryCard from './SummaryCard'
+import ThresholdPanel from './ThresholdPanel'
 
 const monthOptions = getMonthOptions()
 const yearOptions = getYearOptions(4)
@@ -78,6 +81,11 @@ export default function ReportsPage() {
   const [monthlySummary, setMonthlySummary] = useState({ total: 0, categoryTotals: {} })
   const [form, setForm] = useState(initialForm)
   const [editingExpense, setEditingExpense] = useState(null)
+  const [thresholds, setThresholds] = useState({})
+  const [thresholdLoading, setThresholdLoading] = useState(false)
+  const [thresholdSaving, setThresholdSaving] = useState(false)
+  const [thresholdError, setThresholdError] = useState('')
+  const [thresholdMessage, setThresholdMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -119,6 +127,58 @@ export default function ReportsPage() {
     refreshCategories(controller.signal)
     return () => controller.abort()
   }, [])
+
+  useEffect(() => {
+    const categoriesToLoad = categories.filter((category) => category !== 'All')
+
+    if (categoriesToLoad.length === 0) {
+      setThresholds({})
+      setThresholdError('')
+      setThresholdLoading(false)
+      return undefined
+    }
+
+    const controller = new AbortController()
+
+    async function loadThresholds() {
+      setThresholdLoading(true)
+      setThresholdError('')
+
+      try {
+        const thresholdEntries = await Promise.all(
+          categoriesToLoad.map(async (category) => {
+            try {
+              const threshold = await fetchThreshold(category, controller.signal)
+              return [category, threshold]
+            } catch (thresholdFetchError) {
+              if (thresholdFetchError.name === 'AbortError') {
+                throw thresholdFetchError
+              }
+
+              return null
+            }
+          }),
+        )
+
+        setThresholds(
+          thresholdEntries.filter(Boolean).reduce((accumulator, [category, threshold]) => {
+            accumulator[category] = threshold
+            return accumulator
+          }, {}),
+        )
+      } catch (thresholdFetchError) {
+        if (thresholdFetchError.name !== 'AbortError') {
+          setThresholds({})
+          setThresholdError('Could not load threshold data.')
+        }
+      } finally {
+        setThresholdLoading(false)
+      }
+    }
+
+    loadThresholds()
+    return () => controller.abort()
+  }, [categories])
 
   useEffect(() => {
     resetFormState()
@@ -229,6 +289,7 @@ export default function ReportsPage() {
       await Promise.all([refreshReports(), refreshCategories()])
       resetFormState()
       setFormMessage(editingExpense ? 'Expense updated successfully.' : 'Expense added successfully.')
+      setThresholdMessage('')
     } catch {
       setFormError(editingExpense ? 'Could not update the expense.' : 'Could not save the expense.')
     } finally {
@@ -276,6 +337,38 @@ export default function ReportsPage() {
       setExpensePendingDelete(null)
     }
   }
+
+  async function handleThresholdSave({ category, thresholdAmount, onError }) {
+    setThresholdSaving(true)
+    setThresholdError('')
+    setThresholdMessage('')
+
+    try {
+      const savedThreshold = await saveThreshold({ category, thresholdAmount })
+      setThresholds((current) => ({
+        ...current,
+        [category]: savedThreshold,
+      }))
+      setThresholdMessage(`Threshold saved for ${category}.`)
+    } catch {
+      onError('Could not save the threshold.')
+    } finally {
+      setThresholdSaving(false)
+    }
+  }
+
+  const thresholdWarnings = categoryEntries
+    .map(([category, amount]) => {
+      const threshold = thresholds[category]
+      if (!threshold) {
+        return null
+      }
+
+      return Number(amount || 0) > Number(threshold.thresholdAmount || 0)
+        ? `Budget exceeded for ${category} category`
+        : null
+    })
+    .filter(Boolean)
 
   return (
     <>
@@ -371,6 +464,15 @@ export default function ReportsPage() {
 
       {error ? <section className="status-banner error">{error}</section> : null}
       {loading ? <section className="status-banner">Loading reports...</section> : null}
+      {!loading && !error && thresholdWarnings.length > 0 ? (
+        <section className="warning-stack">
+          {thresholdWarnings.map((warning) => (
+            <div key={warning} className="status-banner warning">
+              {warning}
+            </div>
+          ))}
+        </section>
+      ) : null}
       {expensePendingDelete ? (
         <div className="confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title">
           <div className="confirm-modal">
@@ -477,6 +579,16 @@ export default function ReportsPage() {
                   </div>
                 </div>
               </article>
+
+              <ThresholdPanel
+                categories={categories.filter((category) => category !== 'All')}
+                thresholds={thresholds}
+                loading={thresholdLoading}
+                saving={thresholdSaving}
+                error={thresholdError}
+                successMessage={thresholdMessage}
+                onSave={handleThresholdSave}
+              />
             </section>
           ) : (
             <section className="content-grid reports-grid">
@@ -494,6 +606,16 @@ export default function ReportsPage() {
                 submitLabel={editingExpense ? 'Update Expense' : 'Add Expense'}
                 onCancelEdit={handleCancelEdit}
                 showCancelEdit={Boolean(editingExpense)}
+              />
+
+              <ThresholdPanel
+                categories={categories.filter((category) => category !== 'All')}
+                thresholds={thresholds}
+                loading={thresholdLoading}
+                saving={thresholdSaving}
+                error={thresholdError}
+                successMessage={thresholdMessage}
+                onSave={handleThresholdSave}
               />
 
               <section className="panel panel-large">

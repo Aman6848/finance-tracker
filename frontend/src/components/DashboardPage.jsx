@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createExpense, fetchExpenses } from '../services/api'
+import { createExpense, fetchExpenses, fetchThreshold, saveThreshold } from '../services/api'
 import {
   formatCurrency,
   formatDate,
@@ -8,6 +8,7 @@ import {
 } from '../utils/expenseFormatters'
 import ExpenseForm from './ExpenseForm'
 import SummaryCard from './SummaryCard'
+import ThresholdPanel from './ThresholdPanel'
 
 const defaultDateTime = splitDateTime()
 const { minDate, maxDate } = getDateRange()
@@ -59,6 +60,11 @@ export default function DashboardPage() {
   const [form, setForm] = useState(initialForm)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [thresholds, setThresholds] = useState({})
+  const [thresholdLoading, setThresholdLoading] = useState(false)
+  const [thresholdSaving, setThresholdSaving] = useState(false)
+  const [thresholdError, setThresholdError] = useState('')
+  const [thresholdMessage, setThresholdMessage] = useState('')
   const [error, setError] = useState('')
   const [formError, setFormError] = useState('')
   const [formMessage, setFormMessage] = useState('')
@@ -93,6 +99,58 @@ export default function DashboardPage() {
 
     return () => controller.abort()
   }, [selectedCategory])
+
+  useEffect(() => {
+    const categoriesToLoad = [...new Set(allExpenses.map((expense) => expense.category).filter(Boolean))]
+
+    if (categoriesToLoad.length === 0) {
+      setThresholds({})
+      setThresholdError('')
+      setThresholdLoading(false)
+      return undefined
+    }
+
+    const controller = new AbortController()
+
+    async function loadThresholds() {
+      setThresholdLoading(true)
+      setThresholdError('')
+
+      try {
+        const thresholdEntries = await Promise.all(
+          categoriesToLoad.map(async (category) => {
+            try {
+              const threshold = await fetchThreshold(category, controller.signal)
+              return [category, threshold]
+            } catch (thresholdFetchError) {
+              if (thresholdFetchError.name === 'AbortError') {
+                throw thresholdFetchError
+              }
+
+              return null
+            }
+          }),
+        )
+
+        setThresholds(
+          thresholdEntries.filter(Boolean).reduce((accumulator, [category, threshold]) => {
+            accumulator[category] = threshold
+            return accumulator
+          }, {}),
+        )
+      } catch (thresholdFetchError) {
+        if (thresholdFetchError.name !== 'AbortError') {
+          setThresholds({})
+          setThresholdError('Could not load threshold data.')
+        }
+      } finally {
+        setThresholdLoading(false)
+      }
+    }
+
+    loadThresholds()
+    return () => controller.abort()
+  }, [allExpenses])
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -150,10 +208,30 @@ export default function DashboardPage() {
         expenseTime: nextDateTime.time,
       })
       setFormMessage('Expense added successfully.')
+      setThresholdMessage('')
     } catch {
       setFormError('Could not save the expense.')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleThresholdSave({ category, thresholdAmount, onError }) {
+    setThresholdSaving(true)
+    setThresholdError('')
+    setThresholdMessage('')
+
+    try {
+      const savedThreshold = await saveThreshold({ category, thresholdAmount })
+      setThresholds((current) => ({
+        ...current,
+        [category]: savedThreshold,
+      }))
+      setThresholdMessage(`Threshold saved for ${category}.`)
+    } catch {
+      onError('Could not save the threshold.')
+    } finally {
+      setThresholdSaving(false)
     }
   }
 
@@ -190,6 +268,18 @@ export default function DashboardPage() {
     .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
     .slice(0, 5)
   const weeklySeries = getWeeklySeries(visibleExpenses)
+  const thresholdWarnings = categoryTotals
+    .map((category) => {
+      const threshold = thresholds[category.name]
+      if (!threshold) {
+        return null
+      }
+
+      return category.amount > Number(threshold.thresholdAmount || 0)
+        ? `Budget exceeded for ${category.name} category`
+        : null
+    })
+    .filter(Boolean)
 
   return (
     <>
@@ -273,6 +363,15 @@ export default function DashboardPage() {
 
       {error ? <section className="status-banner error">{error}</section> : null}
       {loading ? <section className="status-banner">Loading expenses...</section> : null}
+      {!loading && !error && thresholdWarnings.length > 0 ? (
+        <section className="warning-stack">
+          {thresholdWarnings.map((warning) => (
+            <div key={warning} className="status-banner warning">
+              {warning}
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       {!loading && !error ? (
         <>
@@ -338,6 +437,16 @@ export default function DashboardPage() {
               formError={formError}
               formMessage={formMessage}
               submitLabel="Add Expense"
+            />
+
+            <ThresholdPanel
+              categories={categories.filter((category) => category !== 'All')}
+              thresholds={thresholds}
+              loading={thresholdLoading}
+              saving={thresholdSaving}
+              error={thresholdError}
+              successMessage={thresholdMessage}
+              onSave={handleThresholdSave}
             />
 
             <article className="panel panel-tall">

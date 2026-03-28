@@ -132,6 +132,7 @@
 }
 
 .filter-control select,
+.form-field select,
 .form-field input {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.2);
@@ -315,6 +316,18 @@
 .status-banner.error {
   border-color: rgba(248, 113, 113, 0.4);
   color: #fecaca;
+}
+
+.warning-stack {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.status-banner.warning {
+  border-color: rgba(245, 158, 11, 0.42);
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.32);
 }
 
 .confirm-overlay {
