@@ -2,7 +2,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/finance_db
     username: postgres
-    password: "Aman@1311"
+    password: Aman@1311
 
   jpa:
     hibernate:
@@ -11,3 +11,6 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+server:
+  port: ${PORT:8080}
