@@ -12,25 +12,31 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.YearMonth;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
+    private final List<ExpenseObserver> expenseObservers;
 
-    public ExpenseService(ExpenseRepository expenseRepository) {
+    public ExpenseService(ExpenseRepository expenseRepository, List<ExpenseObserver> expenseObservers) {
         this.expenseRepository = expenseRepository;
+        this.expenseObservers = expenseObservers;
     }
 
     public Expense createExpense(Expense expense) {
         if(expense.getCreatedAt()==null){
             expense.setCreatedAt(LocalDateTime.now());
         }
-        return expenseRepository.save(expense);
+        Expense savedExpense = expenseRepository.save(expense);
+        notifyExpenseObservers(savedExpense.getCategory());
+        return savedExpense;
     }
 
     public Page<Expense> getAllExpenses(Pageable pageable) {
@@ -98,13 +104,16 @@ public class ExpenseService {
         Expense existingExpense = expenseRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Expense not found with id " + id));
+        String previousCategory = existingExpense.getCategory();
 
         existingExpense.setTitle(expense.getTitle());
         existingExpense.setAmount(expense.getAmount());
         existingExpense.setCategory(expense.getCategory());
         existingExpense.setCreatedAt(expense.getCreatedAt() != null ? expense.getCreatedAt() : existingExpense.getCreatedAt());
 
-        return expenseRepository.save(existingExpense);
+        Expense savedExpense = expenseRepository.save(existingExpense);
+        notifyExpenseObservers(previousCategory, savedExpense.getCategory());
+        return savedExpense;
     }
 
     public String deleteExpense(Long id) {
@@ -140,5 +149,30 @@ public class ExpenseService {
         }
 
         return specification;
+    }
+
+    private void notifyExpenseObservers(String... categories) {
+        Set<String> normalizedCategories = new LinkedHashSet<>();
+        for (String category : categories) {
+            String normalizedCategory = normalizeCategory(category);
+            if (normalizedCategory != null) {
+                normalizedCategories.add(normalizedCategory);
+            }
+        }
+
+        for (String category : normalizedCategories) {
+            for (ExpenseObserver expenseObserver : expenseObservers) {
+                expenseObserver.onExpenseChanged(category);
+            }
+        }
+    }
+
+    private String normalizeCategory(String category) {
+        if (category == null) {
+            return null;
+        }
+
+        String normalizedCategory = category.trim();
+        return normalizedCategory.isEmpty() ? null : normalizedCategory.toUpperCase();
     }
 }

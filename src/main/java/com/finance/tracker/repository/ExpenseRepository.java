@@ -12,6 +12,13 @@ import java.util.List;
 public interface ExpenseRepository extends JpaRepository<Expense, Long>, JpaSpecificationExecutor<Expense> {
     List<Expense> findByCategory(String category);
 
+    @Query("""
+            select coalesce(sum(e.amount), 0)
+            from Expense e
+            where upper(trim(coalesce(e.category, ''))) = upper(trim(:category))
+            """)
+    Double getTotalByCategory(String category);
+
     List<Expense> findAllByCreatedAtBetweenOrderByCreatedAtAsc(LocalDateTime startDate, LocalDateTime endDate);
 
     @Query("select coalesce(sum(e.amount), 0) from Expense e")
